@@ -1,8 +1,7 @@
 const express = require('express');
 const cors = require('cors');
+const { google } = require('googleapis');
 require('dotenv').config();
-const fs = require('fs');
-const crypto = require('crypto');
 
 const app = express();
 
@@ -33,7 +32,8 @@ app.post('/api/imagen3/generate', async (req, res) => {
 
     console.log('📥 Received Imagen 3 request');
 
-    const accessToken = await getAccessToken();
+    const credentials = getCredentials();
+    const accessToken = await getAccessToken(credentials);
     
     if (!accessToken) {
       throw new Error('Failed to obtain access token');
@@ -41,7 +41,7 @@ app.post('/api/imagen3/generate', async (req, res) => {
 
     console.log('✅ Access token obtained');
 
-    const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
+    const projectId = credentials.project_id;
     const location = 'us-central1';
     
     const response = await fetch(
@@ -102,79 +102,43 @@ app.post('/api/imagen3/generate', async (req, res) => {
   }
 });
 
-async function getAccessToken() {
+function getCredentials() {
   try {
-    let credentials;
+    const credentialsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
     
-    if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
-      credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
-    } 
-    else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-      const credContent = fs.readFileSync(credPath, 'utf-8');
-      credentials = JSON.parse(credContent);
-    }
-    else {
-      throw new Error('No Google Cloud credentials found');
+    if (!credentialsJson) {
+      throw new Error('GOOGLE_APPLICATION_CREDENTIALS_JSON not set');
     }
 
-    const jwt = createJWT(credentials);
+    const credentials = JSON.parse(credentialsJson);
     
-    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-        assertion: jwt
-      })
-    });
-
-    if (!tokenResponse.ok) {
-      const errorData = await tokenResponse.json();
-      throw new Error(`Failed to get access token: ${JSON.stringify(errorData)}`);
+    // FIX: Replace escaped newlines with actual newlines
+    if (credentials.private_key) {
+      credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
     }
-
-    const tokenData = await tokenResponse.json();
-    return tokenData.access_token;
-
+    
+    return credentials;
   } catch (error) {
-    console.error('❌ Error getting access token:', error);
+    console.error('❌ Failed to get credentials:', error);
     throw error;
   }
 }
 
-function createJWT(serviceAccount) {
-  const header = {
-    alg: 'RS256',
-    typ: 'JWT'
-  };
+async function getAccessToken(credentials) {
+  try {
+    const jwtClient = new google.auth.JWT({
+      email: credentials.client_email,
+      key: credentials.private_key,
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    });
 
-  const now = Math.floor(Date.now() / 1000);
-  const payload = {
-    iss: serviceAccount.client_email,
-    scope: 'https://www.googleapis.com/auth/cloud-platform',
-    aud: 'https://oauth2.googleapis.com/token',
-    exp: now + 3600,
-    iat: now
-  };
+    const token = await jwtClient.authorizeAsync();
+    return token.credentials.access_token;
 
-  const headerEncoded = base64url(JSON.stringify(header));
-  const payloadEncoded = base64url(JSON.stringify(payload));
-  const message = `${headerEncoded}.${payloadEncoded}`;
-
-  const signature = crypto.createSign('sha256').update(message).sign(serviceAccount.private_key);
-  const signatureEncoded = base64url(signature);
-
-  return `${message}.${signatureEncoded}`;
-}
-
-function base64url(str) {
-  const bytes = typeof str === 'string' ? Buffer.from(str, 'utf-8') : str;
-  return bytes
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '');
+  } catch (error) {
+    console.error('❌ Failed to get access token:', error.message);
+    throw new Error(`Auth failed: ${error.message}`);
+  }
 }
 
 app.use((err, req, res, next) => {
@@ -187,5 +151,4 @@ app.listen(PORT, () => {
   console.log(`✅ Backend running on port ${PORT}`);
 });
 
-// Export for Vercel
 module.exports = app;
