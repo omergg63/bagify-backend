@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 const fs = require('fs');
+const crypto = require('crypto');
 
 const app = express();
 
@@ -143,8 +144,6 @@ async function getAccessToken() {
 }
 
 function createJWT(serviceAccount) {
-  const crypto = require('crypto');
-
   const header = {
     alg: 'RS256',
     typ: 'JWT'
@@ -185,7 +184,8 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`✅ Backend running on http://localhost:${PORT}`);
-  console.log(`✅ Health check: http://localhost:${PORT}/health`);
-  console.log(`✅ Imagen 3 endpoint: POST http://localhost:${PORT}/api/imagen3/generate`);
+  console.log(`✅ Backend running on port ${PORT}`);
 });
+
+// Export for Vercel
+module.exports = app;
