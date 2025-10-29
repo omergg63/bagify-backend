@@ -3,29 +3,55 @@ const cors = require('cors');
 const { GoogleAuth } = require('google-auth-library');
 
 const app = express();
+const PORT = process.env.PORT || 3001;
 
-// CORS & body
-app.use(cors({ origin: '*', methods: ['POST', 'GET', 'OPTIONS'], credentials: true }));
+// CORS & body parsing - Allow your frontend
+app.use(cors({ 
+  origin: ['https://bagify-frontend.vercel.app', 'http://localhost:3000', '*'], 
+  methods: ['POST', 'GET', 'OPTIONS'], 
+  credentials: true 
+}));
 app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// ---- health & diagnostics
-app.get('/health', (_req, res) => res.json({ status: 'Backend is running ✅' }));
+// Health & diagnostics
+app.get('/health', (_req, res) => res.json({ 
+  status: 'Backend is running ✅',
+  timestamp: new Date().toISOString(),
+  env: process.env.NODE_ENV 
+}));
 
 app.get('/diag', (_req, res) => {
   res.json({
     project_id: process.env.GOOGLE_PROJECT_ID || null,
     client_email: process.env.GOOGLE_CLIENT_EMAIL || null,
-    has_credentials: !!(process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GOOGLE_PRIVATE_KEY),
+    has_service_account_key: !!(process.env.GOOGLE_SERVICE_ACCOUNT_KEY),
+    has_private_key: !!(process.env.GOOGLE_PRIVATE_KEY),
     node_env: process.env.NODE_ENV,
+    timestamp: new Date().toISOString()
   });
 });
 
-// ---- Alternative authentication using GoogleAuth
+// Enhanced authentication with multiple methods
 async function getAccessToken() {
   try {
-    // Method 1: Try using service account credentials from environment
-    if (process.env.GOOGLE_PRIVATE_KEY && process.env.GOOGLE_CLIENT_EMAIL) {
+    let auth;
+    
+    // Method 1: Service Account Key JSON (recommended for deployment)
+    if (process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+      console.log('🔑 Using service account key JSON...');
+      const serviceAccountKey = JSON.parse(
+        Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_KEY, 'base64').toString('utf-8')
+      );
+      
+      auth = new GoogleAuth({
+        credentials: serviceAccountKey,
+        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+      });
+    }
+    // Method 2: Individual environment variables (fallback)
+    else if (process.env.GOOGLE_PRIVATE_KEY && process.env.GOOGLE_CLIENT_EMAIL) {
+      console.log('🔑 Using individual environment variables...');
       const credentials = {
         type: "service_account",
         project_id: process.env.GOOGLE_PROJECT_ID,
@@ -40,23 +66,24 @@ async function getAccessToken() {
         universe_domain: "googleapis.com"
       };
 
-      const auth = new GoogleAuth({
+      auth = new GoogleAuth({
         credentials,
         scopes: ['https://www.googleapis.com/auth/cloud-platform'],
       });
-
-      const client = await auth.getClient();
-      const accessTokenResponse = await client.getAccessToken();
-      
-      if (!accessTokenResponse.token) {
-        throw new Error('No access token received from GoogleAuth');
-      }
-      
-      console.log('✅ Authentication successful with GoogleAuth');
-      return accessTokenResponse.token;
+    }
+    else {
+      throw new Error('No valid credentials found in environment variables');
     }
 
-    throw new Error('No valid credentials found in environment variables');
+    const client = await auth.getClient();
+    const accessTokenResponse = await client.getAccessToken();
+    
+    if (!accessTokenResponse.token) {
+      throw new Error('No access token received from GoogleAuth');
+    }
+    
+    console.log('✅ Authentication successful with GoogleAuth');
+    return accessTokenResponse.token;
 
   } catch (err) {
     console.error('❌ Authentication failed:', err);
@@ -64,7 +91,7 @@ async function getAccessToken() {
   }
 }
 
-// ---- Imagen 3 generate
+// Imagen 3 generation endpoint
 app.post('/api/imagen3/generate', async (req, res) => {
   try {
     console.log('📥 Received Imagen 3 request');
@@ -152,11 +179,15 @@ app.post('/api/imagen3/generate', async (req, res) => {
   }
 });
 
-// ---- error middleware
+// Error handling middleware
 app.use((err, _req, res, _next) => {
   console.error('❌ Unhandled error:', err);
   res.status(500).json({ error: err.message });
 });
 
-// ✅ on vercel, export the app
+// Start server
+app.listen(PORT, () => {
+  console.log(`🚀 Bagify backend running on port ${PORT}`);
+});
+
 module.exports = app;
