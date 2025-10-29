@@ -104,20 +104,33 @@ app.post('/api/imagen3/generate', async (req, res) => {
 
 function getCredentials() {
   try {
-    const credentialsBase64 = process.env.GOOGLE_APPLICATION_CREDENTIALS_BASE64;
-    
-    if (!credentialsBase64) {
-      throw new Error('GOOGLE_APPLICATION_CREDENTIALS_BASE64 not set');
-    }
+    // Build credentials object from separate environment variables
+    const credentials = {
+      type: "service_account",
+      project_id: process.env.GOOGLE_PROJECT_ID,
+      private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID,
+      private_key: process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : null,
+      client_email: process.env.GOOGLE_CLIENT_EMAIL,
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      auth_uri: "https://accounts.google.com/o/oauth2/auth",
+      token_uri: "https://oauth2.googleapis.com/token",
+      auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+      client_x509_cert_url: `https://www.googleapis.com/robot/v1/metadata/x509/${encodeURIComponent(process.env.GOOGLE_CLIENT_EMAIL || '')}`,
+      universe_domain: "googleapis.com"
+    };
 
-    // Decode base64 to get the original JSON string
-    const credentialsJson = Buffer.from(credentialsBase64, 'base64').toString('utf-8');
-    const credentials = JSON.parse(credentialsJson);
+    // Validate all required fields are present
+    const required = ['project_id', 'private_key_id', 'private_key', 'client_email', 'client_id'];
+    for (const field of required) {
+      if (!credentials[field]) {
+        throw new Error(`Missing required credential field: ${field}`);
+      }
+    }
     
-    console.log('✅ Credentials decoded successfully from base64');
+    console.log('✅ Credentials built successfully from environment variables');
     return credentials;
   } catch (error) {
-    console.error('❌ Failed to decode credentials:', error);
+    console.error('❌ Failed to build credentials:', error);
     throw error;
   }
 }
