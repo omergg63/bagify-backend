@@ -104,22 +104,20 @@ app.post('/api/imagen3/generate', async (req, res) => {
 
 function getCredentials() {
   try {
-    const credentialsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+    const credentialsBase64 = process.env.GOOGLE_APPLICATION_CREDENTIALS_BASE64;
     
-    if (!credentialsJson) {
-      throw new Error('GOOGLE_APPLICATION_CREDENTIALS_JSON not set');
+    if (!credentialsBase64) {
+      throw new Error('GOOGLE_APPLICATION_CREDENTIALS_BASE64 not set');
     }
 
+    // Decode base64 to get the original JSON string
+    const credentialsJson = Buffer.from(credentialsBase64, 'base64').toString('utf-8');
     const credentials = JSON.parse(credentialsJson);
     
-    // FIX: Replace escaped newlines with actual newlines
-    if (credentials.private_key) {
-      credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
-    }
-    
+    console.log('✅ Credentials decoded successfully from base64');
     return credentials;
   } catch (error) {
-    console.error('❌ Failed to get credentials:', error);
+    console.error('❌ Failed to decode credentials:', error);
     throw error;
   }
 }
