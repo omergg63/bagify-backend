@@ -5,14 +5,13 @@ const { google } = require('googleapis');
 
 const app = express();
 
+// CORS & body
 app.use(cors({ origin: '*', methods: ['POST', 'GET', 'OPTIONS'], credentials: true }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb' }));
 
-// --- Health
+// ---- health & diagnostics
 app.get('/health', (_req, res) => res.json({ status: 'Backend is running ✅' }));
-
-// --- Quick diag so we can SEE what envs arrived in the runtime
 app.get('/diag', (_req, res) => {
   const pk = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
   res.json({
@@ -23,33 +22,32 @@ app.get('/diag', (_req, res) => {
   });
 });
 
-// --- Small helper: get SA access token (Vertex / Cloud scope)
+// ---- google auth (service account -> access token)
 async function getAccessToken() {
   try {
     const jwt = new google.auth.JWT({
-      email: process.env.GOOGLE_CLIENT_EMAIL,                 // service account email
+      email: process.env.GOOGLE_CLIENT_EMAIL,
       key: (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
       scopes: ['https://www.googleapis.com/auth/cloud-platform'],
     });
-    const { access_token } = await jwt.authorize();           // <-- important: authorize(), not authorizeAsync()
+    const { access_token } = await jwt.authorize(); // important: authorize()
     if (!access_token) throw new Error('No access token returned');
     return access_token;
   } catch (err) {
-    // surface the exact google error message
-    const msg = err && err.message ? err.message : String(err);
+    const msg = err?.message || String(err);
     throw new Error(`Auth failed: ${msg}`);
   }
 }
 
-// --- Imagen 3 generate endpoint
+// ---- Imagen 3 generate (editImage-like) via publisher model
 app.post('/api/imagen3/generate', async (req, res) => {
   try {
     const { referenceImageBase64, bagImageBase64, prompt } = req.body || {};
     if (!referenceImageBase64 || !bagImageBase64 || !prompt) {
-      return res.status(400).json({ error: 'Missing required fields' });
+      return res.status(400).json({ success: false, error: 'Missing required fields' });
     }
 
-    const accessToken = await getAccessToken();               // <-- if anything is wrong, we’ll see it clearly here
+    const accessToken = await getAccessToken();
     const projectId = process.env.GOOGLE_PROJECT_ID;
     const location = 'us-central1';
 
@@ -79,7 +77,10 @@ app.post('/api/imagen3/generate', async (req, res) => {
 
     if (!resp.ok) {
       const errJson = await resp.json().catch(() => ({}));
-      return res.status(resp.status).json({ success: false, error: errJson || await resp.text() });
+      return res.status(resp.status).json({
+        success: false,
+        error: errJson?.error?.message || errJson || (await resp.text()),
+      });
     }
 
     const data = await resp.json();
@@ -92,10 +93,8 @@ app.post('/api/imagen3/generate', async (req, res) => {
   }
 });
 
-// --- Error middleware
+// ---- error middleware
 app.use((err, _req, res, _next) => res.status(500).json({ error: err.message }));
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`✅ Backend running on port ${PORT}`));
-
+// ✅ on vercel, export the app (do NOT call app.listen)
 module.exports = app;
