@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { google } = require('googleapis');
+const { GoogleAuth } = require('google-auth-library');
 
 const app = express();
 
@@ -13,60 +13,54 @@ app.use(express.urlencoded({ limit: '50mb' }));
 app.get('/health', (_req, res) => res.json({ status: 'Backend is running ✅' }));
 
 app.get('/diag', (_req, res) => {
-  const pk = reconstructPrivateKey();
   res.json({
     project_id: process.env.GOOGLE_PROJECT_ID || null,
     client_email: process.env.GOOGLE_CLIENT_EMAIL || null,
-    has_private_key: pk.includes('BEGIN PRIVATE KEY'),
-    pk_len: pk.length,
-    pk_start: pk.substring(0, 50),
-    pk_end: pk.substring(pk.length - 50),
+    has_credentials: !!(process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GOOGLE_PRIVATE_KEY),
+    node_env: process.env.NODE_ENV,
   });
 });
 
-// ---- reconstruct private key from parts to avoid Vercel corruption
-function reconstructPrivateKey() {
-  // Split the private key into parts to avoid corruption
-  const keyBody = process.env.GOOGLE_PRIVATE_KEY_BODY || '';
-  
-  if (keyBody) {
-    // Reconstruct the full private key
-    const fullKey = `-----BEGIN PRIVATE KEY-----\n${keyBody.replace(/(.{64})/g, '$1\n').trim()}\n-----END PRIVATE KEY-----`;
-    return fullKey;
-  }
-  
-  // Fallback to the original method
-  return (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
-}
-
-// ---- google auth (service account -> access token)
+// ---- Alternative authentication using GoogleAuth
 async function getAccessToken() {
   try {
-    const privateKey = reconstructPrivateKey();
-    
-    // Validate the private key format
-    if (!privateKey.includes('-----BEGIN PRIVATE KEY-----') || !privateKey.includes('-----END PRIVATE KEY-----')) {
-      throw new Error('Invalid private key format - missing BEGIN/END markers');
+    // Method 1: Try using service account credentials from environment
+    if (process.env.GOOGLE_PRIVATE_KEY && process.env.GOOGLE_CLIENT_EMAIL) {
+      const credentials = {
+        type: "service_account",
+        project_id: process.env.GOOGLE_PROJECT_ID,
+        private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID,
+        private_key: (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+        client_email: process.env.GOOGLE_CLIENT_EMAIL,
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        auth_uri: "https://accounts.google.com/o/oauth2/auth",
+        token_uri: "https://oauth2.googleapis.com/token",
+        auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+        client_x509_cert_url: `https://www.googleapis.com/robot/v1/metadata/x509/${encodeURIComponent(process.env.GOOGLE_CLIENT_EMAIL)}`,
+        universe_domain: "googleapis.com"
+      };
+
+      const auth = new GoogleAuth({
+        credentials,
+        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+      });
+
+      const client = await auth.getClient();
+      const accessTokenResponse = await client.getAccessToken();
+      
+      if (!accessTokenResponse.token) {
+        throw new Error('No access token received from GoogleAuth');
+      }
+      
+      console.log('✅ Authentication successful with GoogleAuth');
+      return accessTokenResponse.token;
     }
 
-    console.log('🔑 Private key length:', privateKey.length);
-    console.log('🔑 Private key start:', privateKey.substring(0, 50));
+    throw new Error('No valid credentials found in environment variables');
 
-    const jwt = new google.auth.JWT({
-      email: process.env.GOOGLE_CLIENT_EMAIL,
-      key: privateKey,
-      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-    });
-    
-    const { access_token } = await jwt.authorize();
-    if (!access_token) throw new Error('No access token returned');
-    
-    console.log('✅ Access token obtained successfully');
-    return access_token;
   } catch (err) {
-    console.error('❌ Auth error:', err);
-    const msg = err?.message || String(err);
-    throw new Error(`Auth failed: ${msg}`);
+    console.error('❌ Authentication failed:', err);
+    throw new Error(`Auth failed: ${err.message}`);
   }
 }
 
