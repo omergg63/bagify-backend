@@ -44,8 +44,9 @@ app.post('/api/imagen3/generate', async (req, res) => {
     const projectId = credentials.project_id;
     const location = 'us-central1';
     
+    // CORRECTED: Use the proper Imagen 3 API endpoint and format
     const response = await fetch(
-      `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/imagegeneration@006:editImage`,
+      `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/imagen-3.0-capability-001:predict`,
       {
         method: 'POST',
         headers: {
@@ -56,14 +57,16 @@ app.post('/api/imagen3/generate', async (req, res) => {
           instances: [
             {
               prompt: prompt,
-              image: {
-                bytesBase64Encoded: referenceImageBase64,
-                mimeType: 'image/jpeg'
-              },
-              editImage: {
-                bytesBase64Encoded: bagImageBase64,
-                mimeType: 'image/jpeg'
-              }
+              referenceImages: [
+                {
+                  bytesBase64Encoded: referenceImageBase64,
+                  mimeType: 'image/jpeg'
+                },
+                {
+                  bytesBase64Encoded: bagImageBase64,
+                  mimeType: 'image/jpeg'
+                }
+              ]
             }
           ],
           parameters: {
@@ -82,6 +85,7 @@ app.post('/api/imagen3/generate', async (req, res) => {
 
     const data = await response.json();
     
+    // CORRECTED: Use the proper response format for Imagen 3
     if (!data.predictions || !data.predictions[0] || !data.predictions[0].bytesBase64Encoded) {
       throw new Error('Imagen 3 API did not return an image');
     }
