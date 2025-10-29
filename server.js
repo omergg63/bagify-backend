@@ -1,4 +1,3 @@
-// server.js
 const express = require('express');
 const cors = require('cors');
 const { google } = require('googleapis');
@@ -46,13 +45,10 @@ app.post('/api/imagen3/generate', async (req, res) => {
     if (!referenceImageBase64 || !bagImageBase64 || !prompt) {
       return res.status(400).json({ success: false, error: 'Missing required fields' });
     }
-
     const accessToken = await getAccessToken();
     const projectId = process.env.GOOGLE_PROJECT_ID;
     const location = 'us-central1';
-
     const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/imagen-3.0-capability-001:predict`;
-
     const body = {
       instances: [
         {
@@ -68,13 +64,11 @@ app.post('/api/imagen3/generate', async (req, res) => {
         outputFormat: 'PNG',
       },
     };
-
     const resp = await fetch(url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-
     if (!resp.ok) {
       const errJson = await resp.json().catch(() => ({}));
       return res.status(resp.status).json({
@@ -82,11 +76,9 @@ app.post('/api/imagen3/generate', async (req, res) => {
         error: errJson?.error?.message || errJson || (await resp.text()),
       });
     }
-
     const data = await resp.json();
     const img = data?.predictions?.[0]?.bytesBase64Encoded;
     if (!img) return res.status(502).json({ success: false, error: 'Imagen 3 API did not return an image' });
-
     res.json({ success: true, image: img });
   } catch (err) {
     res.status(500).json({ success: false, error: err?.message || String(err) });
