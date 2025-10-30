@@ -46,19 +46,10 @@ app.post('/api/imagen3/generate', async (req, res) => {
       throw new Error('OPENAI_API_KEY environment variable not set');
     }
     
-    // Enhanced prompt for DALL-E 3 bag replacement
+    // Shorter prompt for DALL-E 3 (under 1000 characters)
     const dallePrompt = `${prompt}
 
-CRITICAL INSTRUCTIONS FOR BAG REPLACEMENT:
-- The woman must remain identical (same face, body, pose, hair)
-- The background scene must remain identical 
-- REPLACE her current handbag with the specific target bag shown in the reference
-- The new bag must match the target bag exactly (color, style, hardware, proportions)
-- Make the bag replacement look natural and well-integrated
-- Maintain the original lighting and scene composition
-- Keep all other elements unchanged
-
-Focus on creating a seamless, realistic bag replacement while preserving everything else about the image.`;
+Replace the woman's handbag with the target bag from the reference image. Keep the woman identical (face, body, pose, hair) and preserve the background scene exactly. The new bag must match the target bag's color, style, and details precisely. Make the replacement look natural with proper lighting integration.`;
 
     console.log('🌐 Calling DALL-E 3 API...');
     
