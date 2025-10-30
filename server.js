@@ -15,116 +15,108 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Health & diagnostics
 app.get('/health', (_req, res) => res.json({ 
-  status: 'Backend is running ✅',
+  status: 'Backend is running with DALL-E 3 ✅',
   timestamp: new Date().toISOString(),
   env: process.env.NODE_ENV 
 }));
 
 app.get('/diag', (_req, res) => {
   res.json({
-    project_id: process.env.GOOGLE_PROJECT_ID || null,
-    has_vertex_api_key: !!(process.env.VERTEX_AI_API_KEY),
+    has_openai_api_key: !!(process.env.OPENAI_API_KEY),
+    api_provider: 'OpenAI DALL-E 3',
     node_env: process.env.NODE_ENV,
     timestamp: new Date().toISOString()
   });
 });
 
-// Simple API key authentication for Vertex AI
-async function getAccessTokenWithApiKey() {
-  try {
-    const apiKey = process.env.VERTEX_AI_API_KEY;
-    
-    if (!apiKey) {
-      throw new Error('VERTEX_AI_API_KEY environment variable not set');
-    }
-    
-    console.log('🔑 Using Vertex AI API Key authentication...');
-    return apiKey;
-    
-  } catch (err) {
-    console.error('❌ API Key authentication failed:', err);
-    throw new Error(`API Key auth failed: ${err.message}`);
-  }
-}
-
-// Imagen 3 generation endpoint with API key auth
+// DALL-E 3 image generation with precise bag replacement
 app.post('/api/imagen3/generate', async (req, res) => {
   try {
-    console.log('📥 Received Imagen 3 request');
+    console.log('📥 Received DALL-E 3 request for bag replacement');
     
     const { referenceImageBase64, bagImageBase64, prompt } = req.body || {};
     if (!referenceImageBase64 || !bagImageBase64 || !prompt) {
       return res.status(400).json({ success: false, error: 'Missing required fields' });
     }
     
-    console.log('🔐 Getting API key...');
-    const apiKey = await getAccessTokenWithApiKey();
+    console.log('🔐 Using OpenAI DALL-E 3...');
+    const apiKey = process.env.OPENAI_API_KEY;
     
-    const projectId = process.env.GOOGLE_PROJECT_ID;
-    const location = 'us-central1';
+    if (!apiKey) {
+      throw new Error('OPENAI_API_KEY environment variable not set');
+    }
     
-    // Try API key authentication method
-    const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/imagen-3.0-capability-001:predict?key=${apiKey}`;
+    // Enhanced prompt for DALL-E 3 bag replacement
+    const dallePrompt = `${prompt}
+
+CRITICAL INSTRUCTIONS FOR BAG REPLACEMENT:
+- The woman must remain identical (same face, body, pose, hair)
+- The background scene must remain identical 
+- REPLACE her current handbag with the specific target bag shown in the reference
+- The new bag must match the target bag exactly (color, style, hardware, proportions)
+- Make the bag replacement look natural and well-integrated
+- Maintain the original lighting and scene composition
+- Keep all other elements unchanged
+
+Focus on creating a seamless, realistic bag replacement while preserving everything else about the image.`;
+
+    console.log('🌐 Calling DALL-E 3 API...');
     
-    console.log('🌐 Calling Imagen 3 API with API key...');
-    
-    const body = {
-      instances: [
-        {
-          prompt,
-          referenceImages: [
-            { bytesBase64Encoded: referenceImageBase64, mimeType: 'image/jpeg' },
-            { bytesBase64Encoded: bagImageBase64, mimeType: 'image/jpeg' },
-          ],
-        },
-      ],
-      parameters: {
-        sampleCount: 1,
-        outputFormat: 'PNG',
-      },
-    };
-    
-    const resp = await fetch(url, {
+    const response = await fetch('https://api.openai.com/v1/images/edits', {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json' 
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
       },
-      body: JSON.stringify(body),
+      body: (() => {
+        const formData = new FormData();
+        
+        // Convert base64 to blob for the image to edit
+        const imageBuffer = Buffer.from(referenceImageBase64, 'base64');
+        const imageBlob = new Blob([imageBuffer], { type: 'image/png' });
+        formData.append('image', imageBlob, 'reference.png');
+        
+        // Add the prompt
+        formData.append('prompt', dallePrompt);
+        formData.append('n', '1');
+        formData.append('size', '1024x1024');
+        
+        return formData;
+      })(),
     });
     
-    console.log('📡 API response status:', resp.status);
+    console.log('📡 DALL-E 3 response status:', response.status);
     
-    if (!resp.ok) {
-      const errText = await resp.text();
-      console.error('❌ API error response:', errText);
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ DALL-E 3 API error:', errorText);
       
-      let errJson;
-      try {
-        errJson = JSON.parse(errText);
-      } catch {
-        errJson = { message: errText };
-      }
-      
-      return res.status(resp.status).json({
+      return res.status(response.status).json({
         success: false,
-        error: errJson?.error?.message || errJson?.message || errText,
+        error: `DALL-E 3 API error: ${errorText}`,
       });
     }
     
-    const data = await resp.json();
-    const img = data?.predictions?.[0]?.bytesBase64Encoded;
+    const data = await response.json();
     
-    if (!img) {
-      console.error('❌ No image in response:', JSON.stringify(data, null, 2));
+    if (!data.data || !data.data[0] || !data.data[0].url) {
+      console.error('❌ No image URL in DALL-E 3 response:', JSON.stringify(data, null, 2));
       return res.status(502).json({ 
         success: false, 
-        error: 'Imagen 3 API did not return an image',
+        error: 'DALL-E 3 did not return a valid image URL',
         response: data
       });
     }
     
-    console.log('✅ Imagen 3 generation successful');
-    res.json({ success: true, image: img });
+    // Download the image and convert to base64
+    const imageUrl = data.data[0].url;
+    console.log('📥 Downloading generated image...');
+    
+    const imageResponse = await fetch(imageUrl);
+    const imageBuffer = await imageResponse.arrayBuffer();
+    const imageBase64 = Buffer.from(imageBuffer).toString('base64');
+    
+    console.log('✅ DALL-E 3 generation successful');
+    res.json({ success: true, image: imageBase64 });
     
   } catch (err) {
     console.error('❌ Server error:', err);
@@ -143,7 +135,7 @@ app.use((err, _req, res, _next) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Bagify backend running on port ${PORT}`);
+  console.log(`🚀 Bagify backend running with DALL-E 3 on port ${PORT}`);
 });
 
 module.exports = app;
