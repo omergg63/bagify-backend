@@ -6,7 +6,7 @@ const PORT = process.env.PORT || 3001;
 
 // CORS & body parsing
 app.use(cors({ 
-  origin: ['https://bagify-frontend.vercel.app', 'http://localhost:3000', '*'], 
+  origin: '*', // Allow all origins for automation triggers
   methods: ['POST', 'GET', 'OPTIONS'], 
   credentials: true 
 }));
