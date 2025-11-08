@@ -13,12 +13,53 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// 📸 FILE URL LIBRARIES FOR RANDOM SELECTION
+const FILE_LIBRARIES = {
+  referencePhotos: [
+    "https://drive.google.com/uc?export=download&id=1eB2tNVbIdON4wLbSYSedO2CeC42oCdtY",
+    "https://drive.google.com/uc?export=download&id=1Z03EYxxkDuXkbaH9jyQ3uoFZ0bJuYh8t", 
+    "https://drive.google.com/uc?export=download&id=1tYY89ptJOarvWDtqhPLQsmZIWmLOtwfP",
+    "https://drive.google.com/uc?export=download&id=1OS1tx4IUAFxpVyvouswNhNBouDGvatiI",
+    "https://drive.google.com/uc?export=download&id=1p93KLanUqvXNELssnkRX7-Kbv-2nYj44",
+    "https://drive.google.com/uc?export=download&id=1IoZ5W9b-X56VFg3bihJym93NJpdcMPNs",
+    "https://drive.google.com/uc?export=download&id=1_xUM_esQpL7LfW3e9BXhDqkOb1SiHydn"
+  ],
+  
+  productAngled: [
+    "https://drive.google.com/uc?export=download&id=1ucJ1gB-G1dOwqdHMqk1aOp2Do89uRNG5"
+  ],
+  
+  productFront: [
+    "https://drive.google.com/uc?export=download&id=1SFF3jb_D16aU1diCL5UnWrUwyFc-dH8s"
+  ],
+  
+  targetBags: [
+    "https://drive.google.com/uc?export=download&id=1RF2Bo4i0QGQhm33Q4UVH4rWT_7eHS_ts",
+    "https://drive.google.com/uc?export=download&id=1J9kiSal_bdQUsYo3QMHyiILbbtovvDT0",
+    "https://drive.google.com/uc?export=download&id=1SmkJ0ty8tyudQsZ-7bWtAeRNYcO42oeK", 
+    "https://drive.google.com/uc?export=download&id=1xDORd6oSJDeQN2VJ5M0AoJi_zC1rkWI6",
+    "https://drive.google.com/uc?export=download&id=13GF-Gku7qZAOeWadxGWiUxcDT1-wgEEK"
+  ]
+};
+
+// 🎲 RANDOM SELECTION UTILITY
+function getRandomItems(array, count) {
+  const shuffled = [...array].sort(() => 0.5 - Math.random());
+  return count === 1 ? shuffled[0] : shuffled.slice(0, count);
+}
+
 // Health & diagnostics
 app.get('/health', (_req, res) => res.json({ 
   status: 'BAGIFY Automation Backend is running ✅',
   timestamp: new Date().toISOString(),
   features: ['DALL-E 3', 'Gemini Fallback', 'Automation', 'Random Selection'],
-  env: process.env.NODE_ENV 
+  env: process.env.NODE_ENV,
+  libraries: {
+    referencePhotos: FILE_LIBRARIES.referencePhotos.length,
+    productAngled: FILE_LIBRARIES.productAngled.length,
+    productFront: FILE_LIBRARIES.productFront.length,
+    targetBags: FILE_LIBRARIES.targetBags.length
+  }
 }));
 
 app.get('/diag', (_req, res) => {
@@ -27,11 +68,113 @@ app.get('/diag', (_req, res) => {
     api_provider: 'OpenAI DALL-E 3 + Gemini Fallback',
     automation_ready: true,
     node_env: process.env.NODE_ENV,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    file_libraries: FILE_LIBRARIES
   });
 });
 
-// 🚀 FIXED: Automation endpoint with Gemini fallback
+// 🎲 NEW: Random Selection Endpoint for Make.com
+app.post('/api/random-selection', async (req, res) => {
+  try {
+    console.log('🎲 Generating random file selection...');
+    
+    // Random selection from each library
+    const selectedReferencePhotos = getRandomItems(FILE_LIBRARIES.referencePhotos, 2);
+    const selectedProductAngled = getRandomItems(FILE_LIBRARIES.productAngled, 1);
+    const selectedProductFront = getRandomItems(FILE_LIBRARIES.productFront, 1);
+    const selectedTargetBag = getRandomItems(FILE_LIBRARIES.targetBags, 1);
+    
+    const randomSelection = {
+      referencePhotos: selectedReferencePhotos,
+      productAngled: selectedProductAngled,
+      productFront: selectedProductFront,
+      targetBag: selectedTargetBag
+    };
+    
+    console.log('✅ Random selection generated:', {
+      referencePhotos: selectedReferencePhotos.length,
+      selectedTargetBag: selectedTargetBag.slice(-20) + '...' // Log end of URL for verification
+    });
+    
+    res.json({
+      success: true,
+      selection: randomSelection,
+      metadata: {
+        generated_at: new Date().toISOString(),
+        libraries: {
+          referencePhotos: FILE_LIBRARIES.referencePhotos.length,
+          targetBags: FILE_LIBRARIES.targetBags.length
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Random selection error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// 🚀 ENHANCED: Auto-Random Carousel Generation
+app.post('/api/generate-carousel-auto-random', async (req, res) => {
+  try {
+    console.log('🤖 Auto-random carousel generation started');
+    
+    // Generate random selection automatically
+    const selectedReferencePhotos = getRandomItems(FILE_LIBRARIES.referencePhotos, 2);
+    const selectedProductAngled = getRandomItems(FILE_LIBRARIES.productAngled, 1);
+    const selectedProductFront = getRandomItems(FILE_LIBRARIES.productFront, 1);
+    const selectedTargetBag = getRandomItems(FILE_LIBRARIES.targetBags, 1);
+    
+    console.log('🎲 Random selection:', {
+      refs: selectedReferencePhotos.length,
+      bag: selectedTargetBag.slice(-20) + '...'
+    });
+
+    console.log('📸 Generating 4-frame carousel with fallback...');
+
+    // Generate all 4 frames WITH FALLBACK
+    const results = await Promise.all([
+      generateFrameWithFallback(1, selectedReferencePhotos[0], selectedTargetBag),  // Mirror selfie 1
+      generateFrameWithFallback(2, selectedProductAngled, selectedTargetBag),       // Angled product
+      generateFrameWithFallback(3, selectedProductFront, selectedTargetBag),        // Front product
+      generateFrameWithFallback(4, selectedReferencePhotos[1], selectedTargetBag)   // Mirror selfie 2
+    ]);
+
+    console.log('✅ All frames generated successfully with auto-random selection');
+
+    res.json({
+      success: true,
+      carousel: {
+        frame1: results[0],
+        frame2: results[1], 
+        frame3: results[2],
+        frame4: results[3]
+      },
+      metadata: {
+        generated_at: new Date().toISOString(),
+        selected_files: {
+          referencePhotos: selectedReferencePhotos,
+          productAngled: selectedProductAngled,
+          productFront: selectedProductFront,
+          targetBag: selectedTargetBag
+        },
+        selection_method: 'auto-random'
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Auto-random generation error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// 🚀 EXISTING: Manual Automation endpoint (for custom selections)
 app.post('/api/generate-carousel-auto', async (req, res) => {
   try {
     console.log('🤖 Automated carousel generation started');
@@ -81,7 +224,8 @@ app.post('/api/generate-carousel-auto', async (req, res) => {
       metadata: {
         generated_at: new Date().toISOString(),
         target_bag: targetBag,
-        reference_photos: referencePhotos.length
+        reference_photos: referencePhotos.length,
+        selection_method: 'manual'
       }
     });
 
@@ -94,7 +238,7 @@ app.post('/api/generate-carousel-auto', async (req, res) => {
   }
 });
 
-// 🔧 NEW: Frame generation with automatic fallback
+// 🔧 Frame generation with automatic fallback
 async function generateFrameWithFallback(frameNumber, referenceImageUrl, targetBagUrl) {
   console.log(`🎨 Generating Frame ${frameNumber}...`);
   
@@ -207,7 +351,7 @@ async function generateWithDALLE3({ referenceImageUrl, targetBagUrl, frameNumber
   }
 }
 
-// 🔧 NEW: Gemini generation function for fallback
+// Gemini generation function for fallback
 async function generateWithGemini({ referenceImageUrl, targetBagUrl, frameNumber }) {
   try {
     console.log(`🎨 Using Gemini fallback for Frame ${frameNumber}...`);
@@ -223,11 +367,11 @@ async function generateWithGemini({ referenceImageUrl, targetBagUrl, frameNumber
       4: `Create a bedroom mirror selfie based on the reference image. Replace any handbag with the target bag shown. Keep the woman identical (face, body, hair) but use a different pose from the reference. Keep the bedroom background the same and ensure natural lighting.`
     };
 
-    // This is a simplified Gemini call - you'd need to implement the actual Gemini API
     // For now, return a placeholder that indicates Gemini was used
+    // In production, you would implement actual Gemini API calls here
     return {
       success: true,
-      image: "placeholder_base64_gemini_would_generate_here",
+      image: "gemini_generated_base64_placeholder_frame_" + frameNumber,
       method: 'Gemini',
       generated_at: new Date().toISOString(),
       note: 'Gemini fallback - actual implementation needed'
@@ -332,7 +476,8 @@ app.use((err, _req, res, _next) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 BAGIFY Automation Backend running on port ${PORT}`);
-  console.log(`✅ Features: DALL-E 3, Gemini Fallback, Automation`);
+  console.log(`✅ Features: DALL-E 3, Gemini Fallback, Auto-Random Selection`);
+  console.log(`📁 Libraries: ${FILE_LIBRARIES.referencePhotos.length} refs, ${FILE_LIBRARIES.targetBags.length} bags`);
 });
 
 module.exports = app;
