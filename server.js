@@ -246,6 +246,7 @@ async function generateWithDALLE3(referenceImageBase64, prompt) {
 
 // ==========================================
 // IMAGE GENERATION - GEMINI (Product Photos + Fallback)
+// FIXED: Properly extract base64 image data from Gemini response
 // ==========================================
 
 async function generateWithGemini(referenceImageBase64, bagImageBase64, prompt) {
@@ -253,55 +254,67 @@ async function generateWithGemini(referenceImageBase64, bagImageBase64, prompt) 
     throw new Error('Gemini API key not configured');
   }
 
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-image' });
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-image' });
 
-  const parts = [];
+    const parts = [];
 
-  if (referenceImageBase64) {
-    parts.push({
-      inlineData: {
-        data: referenceImageBase64,
-        mimeType: 'image/png'
-      }
-    });
-  }
-
-  if (bagImageBase64) {
-    parts.push({
-      inlineData: {
-        data: bagImageBase64,
-        mimeType: 'image/png'
-      }
-    });
-  }
-
-  parts.push({
-    text: prompt
-  });
-
-  const result = await model.generateContent({
-    contents: [{
-      role: 'user',
-      parts: parts
-    }]
-  });
-
-  if (!result.response.candidates || result.response.candidates.length === 0) {
-    throw new Error('Gemini did not return any response');
-  }
-
-  const content = result.response.candidates[0].content;
-  if (!content.parts || content.parts.length === 0) {
-    throw new Error('Gemini did not generate image');
-  }
-
-  for (const part of content.parts) {
-    if (part.inlineData && part.inlineData.mimeType.startsWith('image/')) {
-      return part.inlineData.data;
+    if (referenceImageBase64) {
+      parts.push({
+        inlineData: {
+          data: referenceImageBase64,
+          mimeType: 'image/png'
+        }
+      });
     }
-  }
 
-  throw new Error('Gemini response did not contain image');
+    if (bagImageBase64) {
+      parts.push({
+        inlineData: {
+          data: bagImageBase64,
+          mimeType: 'image/png'
+        }
+      });
+    }
+
+    parts.push({
+      text: prompt
+    });
+
+    console.log(`🔄 Calling Gemini API with ${parts.length} parts...`);
+
+    const result = await model.generateContent({
+      contents: [{
+        role: 'user',
+        parts: parts
+      }]
+    });
+
+    if (!result.response || !result.response.candidates || result.response.candidates.length === 0) {
+      throw new Error('Gemini did not return any candidates');
+    }
+
+    const candidate = result.response.candidates[0];
+    if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
+      throw new Error('Gemini did not generate any content parts');
+    }
+
+    // ✅ FIXED: Properly extract image from response
+    for (const part of candidate.content.parts) {
+      // Check if part has inlineData property (image)
+      if (part.inlineData && part.inlineData.data) {
+        console.log(`✅ Gemini returned image data`);
+        // Return the base64 data directly (already base64 from Gemini)
+        return part.inlineData.data;
+      }
+    }
+
+    throw new Error('Gemini response did not contain image data');
+
+  } catch (error) {
+    console.error('❌ Gemini error details:', error);
+    throw new Error(`Gemini failed: ${error.message}`);
+  }
 }
 
 // ==========================================
