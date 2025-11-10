@@ -22,7 +22,6 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // GOOGLE DRIVE SETUP
 // ==========================================
 
-// Folder IDs (from your Google Drive)
 const FOLDER_IDS = {
   bagLibrary: '1dToKUgXRvWCL3ao9yyOmS7kC6qfpFHJW',
   referencePhotos: '1CtLqTUbQF7Dg6Dnal4-FrfotizqsF-5j',
@@ -32,10 +31,8 @@ const FOLDER_IDS = {
   postingQueue: '1fCPlJXlK5avD7AB3l6xWbMnDToKd3ElV'
 };
 
-// Fixed hashtags (used for all posts)
 const FIXED_HASHTAGS = ['#luxuryhandbag', '#bagoftheday', '#designer', '#fashion'];
 
-// Bag name to hashtag mapping
 const BAG_HASHTAG_MAP = {
   'hermes': '#hermes #birkin',
   'lv': '#louisvuitton #speedy',
@@ -46,12 +43,10 @@ const BAG_HASHTAG_MAP = {
   'flap': '#chanelflap'
 };
 
-// Initialize Google Drive
 let driveAuthClient = null;
 
 async function initializeGoogleDrive() {
   try {
-    // Get service account credentials from environment variable
     const keyData = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
     
     if (!keyData) {
@@ -76,8 +71,7 @@ async function initializeGoogleDrive() {
   }
 }
 
-// Initialize Gemini for fallback
-const genAI = new GoogleGenerativeAI(process.env.VITE_API_KEY || '');
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.VITE_API_KEY || '');
 
 // ==========================================
 // HEALTH CHECK
@@ -86,26 +80,75 @@ const genAI = new GoogleGenerativeAI(process.env.VITE_API_KEY || '');
 app.get('/health', (_req, res) => res.json({ 
   status: 'BAGIFY Backend running ✅',
   timestamp: new Date().toISOString(),
-  phase: 'Complete - Google Drive + DALLE-3 (selfies) + Gemini (products)',
   google_drive_ready: !!driveAuthClient,
   openai_ready: !!process.env.OPENAI_API_KEY,
-  gemini_ready: !!process.env.VITE_API_KEY
+  gemini_ready: !!(process.env.GEMINI_API_KEY || process.env.VITE_API_KEY)
 }));
 
-app.get('/diag', (_req, res) => {
-  res.json({
-    google_drive_authenticated: !!driveAuthClient,
-    has_openai_api_key: !!process.env.OPENAI_API_KEY,
-    has_gemini_api_key: !!process.env.VITE_API_KEY,
-    folder_ids: FOLDER_IDS,
-    frame_strategy: {
-      frame1_mirror_selfie: 'DALLE-3 primary (professional quality)',
-      frame2_product_angled: 'Gemini only (image-to-image perfect)',
-      frame3_product_front: 'Gemini only (image-to-image perfect)',
-      frame4_mirror_selfie: 'DALLE-3 primary (professional quality)'
-    },
-    timestamp: new Date().toISOString()
-  });
+// ==========================================
+// DIAGNOSTIC: Test Gemini Response Structure
+// ==========================================
+
+app.post('/api/test-gemini', async (req, res) => {
+  try {
+    console.log('🔍 DIAGNOSTIC: Testing Gemini response structure...');
+    
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_API_KEY;
+    if (!apiKey) {
+      return res.status(400).json({ error: 'No Gemini API key configured' });
+    }
+
+    const genAI2 = new GoogleGenerativeAI(apiKey);
+    const model = genAI2.getGenerativeModel({ model: 'gemini-2.5-flash-image' });
+
+    // Simple test: just generate text, no images
+    console.log('📝 Sending simple text request to Gemini...');
+    
+    const result = await model.generateContent({
+      contents: [{
+        role: 'user',
+        parts: [{ text: 'Generate a simple image of a red bag' }]
+      }]
+    });
+
+    console.log('🔍 Full response structure:');
+    console.log('result.response keys:', Object.keys(result.response));
+    console.log('candidates length:', result.response?.candidates?.length);
+    
+    if (result.response?.candidates?.[0]) {
+      const candidate = result.response.candidates[0];
+      console.log('candidate keys:', Object.keys(candidate));
+      console.log('candidate.content keys:', Object.keys(candidate.content || {}));
+      console.log('candidate.content.parts:', candidate.content?.parts);
+      
+      if (candidate.content?.parts?.[0]) {
+        const part = candidate.content.parts[0];
+        console.log('🔍 First part structure:');
+        console.log('part keys:', Object.keys(part));
+        console.log('part.inlineData:', part.inlineData);
+        console.log('part.inlineData keys:', part.inlineData ? Object.keys(part.inlineData) : 'N/A');
+        
+        // Check for .body property (the culprit)
+        if (part.body) {
+          console.log('⚠️ part.body exists:', typeof part.body);
+          console.log('part.body keys:', Object.keys(part.body || {}));
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Check backend logs for detailed response structure',
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ Test failed:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: error.stack
+    });
+  }
 });
 
 // ==========================================
@@ -168,12 +211,15 @@ async function uploadFileToFolder(fileName, fileBuffer, mimeType, folderId) {
 }
 
 // ==========================================
-// CAROUSEL GENERATION LOGIC
+// HELPERS
 // ==========================================
 
+function cleanupBase64(b64) {
+  const cleaned = b64.replace(/^data:.*?;base64,/, "").trim();
+  return cleaned.replace(/-/g, "+").replace(/_/g, "/");
+}
+
 function extractBagName(fileName) {
-  // Extract bag name from file name
-  // Examples: "Hermes-Birkin.jpg" -> "hermes", "LV-Speedy.jpg" -> "lv"
   const name = fileName.split('-')[0].toLowerCase();
   return name;
 }
@@ -195,7 +241,7 @@ function getRandomItems(array, count) {
 }
 
 // ==========================================
-// IMAGE GENERATION - DALLE-3 (Mirror Selfies Only)
+// IMAGE GENERATION - DALLE-3
 // ==========================================
 
 async function generateWithDALLE3(referenceImageBase64, prompt) {
@@ -245,28 +291,17 @@ async function generateWithDALLE3(referenceImageBase64, prompt) {
 }
 
 // ==========================================
-// CLEANUP BASE64 HELPER (GPT fix)
-// ==========================================
-
-function cleanupBase64(b64) {
-  // Remove data URL prefix if present
-  const cleaned = b64.replace(/^data:.*?;base64,/, "").trim();
-  // Normalize web-safe base64
-  return cleaned.replace(/-/g, "+").replace(/_/g, "/");
-}
-
-// ==========================================
-// IMAGE GENERATION - GEMINI (Product Photos + Fallback)
-// FIXED: Extract base64 → convert to Buffer (GPT recommendation)
+// IMAGE GENERATION - GEMINI WITH DETAILED LOGGING
 // ==========================================
 
 async function generateWithGemini(referenceImageBase64, bagImageBase64, prompt) {
   const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_API_KEY;
   if (!apiKey) {
-    throw new Error('Gemini API key not configured (GEMINI_API_KEY or VITE_API_KEY)');
+    throw new Error('Gemini API key not configured');
   }
 
   try {
+    console.log('🔄 Gemini: Creating model...');
     const genAI2 = new GoogleGenerativeAI(apiKey);
     const model = genAI2.getGenerativeModel({ model: 'gemini-2.5-flash-image' });
 
@@ -279,6 +314,7 @@ async function generateWithGemini(referenceImageBase64, bagImageBase64, prompt) 
           mimeType: 'image/png'
         }
       });
+      console.log('✅ Added reference image to parts');
     }
 
     if (bagImageBase64) {
@@ -288,14 +324,14 @@ async function generateWithGemini(referenceImageBase64, bagImageBase64, prompt) 
           mimeType: 'image/png'
         }
       });
+      console.log('✅ Added bag image to parts');
     }
 
-    parts.push({
-      text: prompt
-    });
+    parts.push({ text: prompt });
+    console.log(`✅ Added text prompt (${parts.length} total parts)`);
 
-    console.log(`🔄 Calling Gemini API with ${parts.length} parts...`);
-
+    console.log('🔄 Calling Gemini generateContent...');
+    
     const result = await model.generateContent({
       contents: [{
         role: 'user',
@@ -303,40 +339,70 @@ async function generateWithGemini(referenceImageBase64, bagImageBase64, prompt) 
       }]
     });
 
+    console.log('🔍 Received response from Gemini');
+    console.log('result.response keys:', Object.keys(result.response || {}));
+
     const candidates = result?.response?.candidates ?? [];
+    console.log(`candidates count: ${candidates.length}`);
+    
     if (!candidates.length) {
       throw new Error('Gemini returned no candidates');
     }
 
-    const contentParts = candidates[0]?.content?.parts ?? [];
+    const candidate = candidates[0];
+    console.log('candidate keys:', Object.keys(candidate || {}));
+    
+    const contentParts = candidate?.content?.parts ?? [];
+    console.log(`content.parts count: ${contentParts.length}`);
+    
     if (!contentParts.length) {
       throw new Error('Gemini returned no content parts');
     }
 
-    // ✅ FIXED per GPT: Find image part and convert to Buffer
+    // Log each part to find the image
+    contentParts.forEach((p, idx) => {
+      console.log(`  part[${idx}] keys:`, Object.keys(p));
+      if (p.inlineData) {
+        console.log(`    inlineData keys:`, Object.keys(p.inlineData));
+        console.log(`    mimeType: ${p.inlineData.mimeType}`);
+        console.log(`    data type: ${typeof p.inlineData.data}`);
+        console.log(`    data length: ${p.inlineData.data?.length || 'N/A'}`);
+      }
+      if (p.text) {
+        console.log(`    text: ${p.text.substring(0, 50)}...`);
+      }
+      if (p.body) {
+        console.log(`    ⚠️ FOUND part.body:`, Object.keys(p.body));
+      }
+    });
+
+    // Find image part
     const imagePart = contentParts.find(p => p.inlineData?.data && p.inlineData?.mimeType);
     if (!imagePart) {
+      console.log('❌ No image part found. Available parts:');
+      contentParts.forEach((p, i) => console.log(`  Part ${i}:`, Object.keys(p)));
       throw new Error('Gemini response did not contain image data');
     }
 
+    console.log('✅ Found image part');
     const mimeType = imagePart.inlineData.mimeType || 'image/png';
     const base64Data = cleanupBase64(imagePart.inlineData.data);
     const buffer = Buffer.from(base64Data, 'base64');
     const base64String = buffer.toString('base64');
 
-    console.log(`✅ Gemini returned image (${mimeType}, ${buffer.length} bytes)`);
+    console.log(`✅ Converted to base64 (${buffer.length} bytes, ${mimeType})`);
 
-    // Return as base64 string for consistency
     return base64String;
 
   } catch (error) {
-    console.error('❌ Gemini error details:', error);
-    throw new Error(`Gemini failed: ${error.message}`);
+    console.error('❌ Gemini error:', error.message);
+    console.error('Stack:', error.stack);
+    throw error;
   }
 }
 
 // ==========================================
-// MAIN CAROUSEL GENERATION ENDPOINT
+// MAIN CAROUSEL ENDPOINT
 // ==========================================
 
 app.post('/api/generate-carousel', async (req, res) => {
@@ -347,19 +413,16 @@ app.post('/api/generate-carousel', async (req, res) => {
       return res.status(500).json({ success: false, error: 'Google Drive not authenticated' });
     }
 
-    // Get all available bags
     const bags = await listFilesInFolder(FOLDER_IDS.bagLibrary);
     if (bags.length === 0) {
-      return res.status(400).json({ success: false, error: 'No bags found in bag-library' });
+      return res.status(400).json({ success: false, error: 'No bags found' });
     }
 
-    // Get all reference photos (selfies)
     const references = await listFilesInFolder(FOLDER_IDS.referencePhotos);
     if (references.length < 2) {
       return res.status(400).json({ success: false, error: 'Need at least 2 reference photos' });
     }
 
-    // Get product images
     const productAngledFiles = await listFilesInFolder(FOLDER_IDS.productAngled);
     const productFrontFiles = await listFilesInFolder(FOLDER_IDS.productFront);
     
@@ -367,11 +430,8 @@ app.post('/api/generate-carousel', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Missing product images' });
     }
 
-    // Random selections
     const selectedBag = getRandomItems(bags, 1);
     const selectedReferences = getRandomItems(references, 2);
-    const selectedProductAngled = productAngledFiles[0];
-    const selectedProductFront = productFrontFiles[0];
 
     console.log('🎲 Selected:', {
       bag: selectedBag.name,
@@ -379,14 +439,12 @@ app.post('/api/generate-carousel', async (req, res) => {
       ref2: selectedReferences[1].name
     });
 
-    // Download images as base64
     const bagUrl = await getFileDownloadUrl(selectedBag.id);
     const ref1Url = await getFileDownloadUrl(selectedReferences[0].id);
     const ref2Url = await getFileDownloadUrl(selectedReferences[1].id);
-    const prodAngledUrl = await getFileDownloadUrl(selectedProductAngled.id);
-    const prodFrontUrl = await getFileDownloadUrl(selectedProductFront.id);
+    const prodAngledUrl = await getFileDownloadUrl(productAngledFiles[0].id);
+    const prodFrontUrl = await getFileDownloadUrl(productFrontFiles[0].id);
 
-    // Fetch images
     const [bagBase64, ref1Base64, ref2Base64, prodAngledBase64, prodFrontBase64] = await Promise.all([
       fetch(bagUrl).then(r => r.arrayBuffer()).then(b => Buffer.from(b).toString('base64')),
       fetch(ref1Url).then(r => r.arrayBuffer()).then(b => Buffer.from(b).toString('base64')),
@@ -396,80 +454,64 @@ app.post('/api/generate-carousel', async (req, res) => {
     ]);
 
     console.log('📥 All images downloaded');
-
-    // Generate frames with CORRECT strategy
     const frames = [];
 
-    // ✅ Frame 1: Mirror selfie 1 + DALLE-3 (professional quality)
-    console.log('🎨 Generating Frame 1 (Mirror selfie - DALLE-3)...');
+    // Frame 1
+    console.log('🎨 Generating Frame 1...');
     try {
       const frame1 = await generateWithDALLE3(
         ref1Base64,
-        'Replace the handbag in this mirror selfie with the target luxury bag. Keep the woman identical, maintain pose and background exactly.'
+        'Replace the handbag with the target luxury bag. Keep the woman identical.'
       );
       frames.push(frame1);
-      console.log('✅ Frame 1 done (DALLE-3)');
+      console.log('✅ Frame 1 done');
     } catch (e) {
-      console.warn('⚠️ Frame 1 DALLE-3 failed, falling back to Gemini:', e.message);
-      const frame1 = await generateWithGemini(ref1Base64, bagBase64, 'Replace the handbag with the target bag. Keep the woman identical.');
+      console.warn('⚠️ Frame 1 failed, trying Gemini...');
+      const frame1 = await generateWithGemini(ref1Base64, bagBase64, 'Replace handbag with target bag. Keep woman identical.');
       frames.push(frame1);
-      console.log('✅ Frame 1 done (Gemini fallback)');
     }
 
-    // ✅ Frame 2: Product angled + GEMINI ONLY (image-to-image, perfect for this)
-    console.log('🎨 Generating Frame 2 (Product angled - Gemini)...');
-    try {
-      const frame2 = await generateWithGemini(
-        prodAngledBase64,
-        bagBase64,
-        'Replace the bag with the target bag. Maintain professional angled view and lighting.'
-      );
-      frames.push(frame2);
-      console.log('✅ Frame 2 done (Gemini)');
-    } catch (e) {
-      console.error('❌ Frame 2 failed:', e.message);
-      throw new Error(`Frame 2 generation failed: ${e.message}`);
-    }
+    // Frame 2
+    console.log('🎨 Generating Frame 2 (Gemini test)...');
+    const frame2 = await generateWithGemini(
+      prodAngledBase64,
+      bagBase64,
+      'Replace the bag with the target bag. Professional angled view.'
+    );
+    frames.push(frame2);
+    console.log('✅ Frame 2 done');
 
-    // ✅ Frame 3: Product front + GEMINI ONLY (image-to-image, perfect for this)
-    console.log('🎨 Generating Frame 3 (Product front - Gemini)...');
-    try {
-      const frame3 = await generateWithGemini(
-        prodFrontBase64,
-        bagBase64,
-        'Replace the bag with the target bag. Maintain professional front view and lighting.'
-      );
-      frames.push(frame3);
-      console.log('✅ Frame 3 done (Gemini)');
-    } catch (e) {
-      console.error('❌ Frame 3 failed:', e.message);
-      throw new Error(`Frame 3 generation failed: ${e.message}`);
-    }
+    // Frame 3
+    console.log('🎨 Generating Frame 3...');
+    const frame3 = await generateWithGemini(
+      prodFrontBase64,
+      bagBase64,
+      'Replace the bag with the target bag. Professional front view.'
+    );
+    frames.push(frame3);
+    console.log('✅ Frame 3 done');
 
-    // ✅ Frame 4: Mirror selfie 2 + DALLE-3 (professional quality, different pose)
-    console.log('🎨 Generating Frame 4 (Mirror selfie - DALLE-3)...');
+    // Frame 4
+    console.log('🎨 Generating Frame 4...');
     try {
       const frame4 = await generateWithDALLE3(
         ref2Base64,
-        'Replace the handbag in this mirror selfie with the target luxury bag. Keep the woman identical but use different pose.'
+        'Replace the handbag with target bag. Different pose.'
       );
       frames.push(frame4);
-      console.log('✅ Frame 4 done (DALLE-3)');
+      console.log('✅ Frame 4 done');
     } catch (e) {
-      console.warn('⚠️ Frame 4 DALLE-3 failed, falling back to Gemini:', e.message);
-      const frame4 = await generateWithGemini(ref2Base64, bagBase64, 'Replace the handbag with target bag. Different pose. Keep woman identical.');
+      console.warn('⚠️ Frame 4 failed, trying Gemini...');
+      const frame4 = await generateWithGemini(ref2Base64, bagBase64, 'Replace handbag. Different pose.');
       frames.push(frame4);
-      console.log('✅ Frame 4 done (Gemini fallback)');
     }
 
-    console.log('✅ All frames generated');
+    console.log('✅ All frames done');
 
-    // Create carousel ID
     const carouselId = `carousel_${Date.now()}`;
     const bagName = extractBagName(selectedBag.name);
     const hashtags = generateHashtags(bagName);
 
-    // Upload frames to generated-carousels
     console.log('📤 Uploading to Google Drive...');
     const frameIds = [];
     for (let i = 0; i < frames.length; i++) {
@@ -483,25 +525,15 @@ app.post('/api/generate-carousel', async (req, res) => {
       frameIds.push(frameId);
     }
 
-    // Create metadata JSON
     const metadata = {
       carousel_id: carouselId,
       target_bag: selectedBag.name,
       bag_name: bagName,
       generated_at: new Date().toISOString(),
       hashtags: hashtags,
-      reference_photos: [selectedReferences[0].name, selectedReferences[1].name],
-      status: 'ready_for_posting',
-      frames: frameIds,
-      frame_strategy: {
-        frame1: 'DALLE-3',
-        frame2: 'Gemini',
-        frame3: 'Gemini',
-        frame4: 'DALLE-3'
-      }
+      status: 'ready_for_posting'
     };
 
-    // Upload metadata
     const metadataBuffer = Buffer.from(JSON.stringify(metadata, null, 2));
     await uploadFileToFolder(
       `${carouselId}_metadata.json`,
@@ -516,10 +548,8 @@ app.post('/api/generate-carousel', async (req, res) => {
       success: true,
       carousel_id: carouselId,
       target_bag: selectedBag.name,
-      bag_name: bagName,
       hashtags: hashtags,
-      frames_count: frames.length,
-      metadata: metadata
+      frames_count: frames.length
     });
 
   } catch (error) {
@@ -532,130 +562,6 @@ app.post('/api/generate-carousel', async (req, res) => {
 });
 
 // ==========================================
-// GET AVAILABLE BAGS
-// ==========================================
-
-app.get('/api/get-bags', async (req, res) => {
-  try {
-    if (!driveAuthClient) {
-      return res.status(500).json({ success: false, error: 'Google Drive not authenticated' });
-    }
-
-    const bags = await listFilesInFolder(FOLDER_IDS.bagLibrary);
-    res.json({ success: true, bags: bags });
-
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ==========================================
-// MANUAL IMAGE GENERATION (Frontend Direct)
-// ==========================================
-
-app.post('/api/imagen3/generate', async (req, res) => {
-  try {
-    console.log('📥 Received image generation request');
-    
-    const { referenceImageBase64, bagImageBase64, prompt } = req.body || {};
-    if (!referenceImageBase64 || !prompt) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Missing referenceImageBase64 or prompt' 
-      });
-    }
-    
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      console.warn('⚠️ OPENAI_API_KEY not set, will use Gemini fallback');
-    }
-
-    if (apiKey) {
-      try {
-        console.log('🎨 Attempting DALLE-3...');
-        const dalleResult = await generateWithDALLE3(referenceImageBase64, prompt);
-        console.log('✅ DALLE-3 success');
-        return res.json({ success: true, image: dalleResult, method: 'DALLE-3' });
-      } catch (dalleError) {
-        console.warn('⚠️ DALLE-3 failed, falling back to Gemini:', dalleError.message);
-      }
-    }
-
-    console.log('🎨 Using Gemini fallback...');
-    const geminiResult = await generateWithGemini(referenceImageBase64, bagImageBase64, prompt);
-    console.log('✅ Gemini success');
-    res.json({ success: true, image: geminiResult, method: 'Gemini' });
-
-  } catch (err) {
-    console.error('❌ Generation failed:', err.message);
-    res.status(500).json({ 
-      success: false, 
-      error: err?.message || 'Generation failed'
-    });
-  }
-});
-
-// ==========================================
-// POST CAROUSEL TO QUEUE
-// ==========================================
-
-app.post('/api/post-carousel', async (req, res) => {
-  try {
-    console.log('📤 Posting carousel to queue...');
-
-    if (!driveAuthClient) {
-      return res.status(500).json({ success: false, error: 'Google Drive not authenticated' });
-    }
-
-    const { carouselId } = req.body;
-    if (!carouselId) {
-      return res.status(400).json({ success: false, error: 'Missing carouselId' });
-    }
-
-    // Get carousel metadata from generated-carousels
-    const files = await listFilesInFolder(FOLDER_IDS.generatedCarousels);
-    const metadataFile = files.find(f => f.name === `${carouselId}_metadata.json`);
-    
-    if (!metadataFile) {
-      return res.status(404).json({ success: false, error: 'Carousel not found' });
-    }
-
-    // Copy carousel to posting-queue
-    const frameFiles = files.filter(f => f.name.startsWith(carouselId) && f.name.includes('frame'));
-    
-    for (const frameFile of frameFiles) {
-      const response = await driveAuthClient.files.copy({
-        fileId: frameFile.id,
-        requestBody: {
-          parents: [FOLDER_IDS.postingQueue]
-        }
-      });
-      console.log(`✅ Copied frame: ${frameFile.name}`);
-    }
-
-    // Copy metadata
-    await driveAuthClient.files.copy({
-      fileId: metadataFile.id,
-      requestBody: {
-        parents: [FOLDER_IDS.postingQueue]
-      }
-    });
-
-    console.log(`✅ Carousel ${carouselId} posted to queue`);
-
-    res.json({
-      success: true,
-      carousel_id: carouselId,
-      status: 'posted_to_queue'
-    });
-
-  } catch (error) {
-    console.error('❌ Post failed:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ==========================================
 // ERROR HANDLING & STARTUP
 // ==========================================
 
@@ -664,19 +570,12 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: err.message });
 });
 
-// Initialize on startup
 async function startup() {
   console.log('🚀 Starting BAGIFY Backend...');
   await initializeGoogleDrive();
   
   app.listen(PORT, () => {
     console.log(`✅ Backend running on port ${PORT}`);
-    console.log(`✅ Frame Strategy:`);
-    console.log(`   Frame 1 (Mirror selfie): DALLE-3 → Gemini fallback`);
-    console.log(`   Frame 2 (Product angled): Gemini only`);
-    console.log(`   Frame 3 (Product front): Gemini only`);
-    console.log(`   Frame 4 (Mirror selfie): DALLE-3 → Gemini fallback`);
-    console.log(`📁 Google Drive integration active`);
   });
 }
 
