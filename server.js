@@ -86,7 +86,7 @@ const genAI = new GoogleGenerativeAI(process.env.VITE_API_KEY || '');
 app.get('/health', (_req, res) => res.json({ 
   status: 'BAGIFY Backend running ✅',
   timestamp: new Date().toISOString(),
-  phase: 'Complete - Google Drive + DALLE-3 + Automation',
+  phase: 'Complete - Google Drive + DALLE-3 (selfies) + Gemini (products)',
   google_drive_ready: !!driveAuthClient,
   openai_ready: !!process.env.OPENAI_API_KEY,
   gemini_ready: !!process.env.VITE_API_KEY
@@ -98,6 +98,12 @@ app.get('/diag', (_req, res) => {
     has_openai_api_key: !!process.env.OPENAI_API_KEY,
     has_gemini_api_key: !!process.env.VITE_API_KEY,
     folder_ids: FOLDER_IDS,
+    frame_strategy: {
+      frame1_mirror_selfie: 'DALLE-3 primary (professional quality)',
+      frame2_product_angled: 'Gemini only (image-to-image perfect)',
+      frame3_product_front: 'Gemini only (image-to-image perfect)',
+      frame4_mirror_selfie: 'DALLE-3 primary (professional quality)'
+    },
     timestamp: new Date().toISOString()
   });
 });
@@ -189,7 +195,7 @@ function getRandomItems(array, count) {
 }
 
 // ==========================================
-// IMAGE GENERATION (DALLE-3 + Gemini Fallback)
+// IMAGE GENERATION - DALLE-3 (Mirror Selfies Only)
 // ==========================================
 
 async function generateWithDALLE3(referenceImageBase64, prompt) {
@@ -237,6 +243,10 @@ async function generateWithDALLE3(referenceImageBase64, prompt) {
 
   return imageBase64;
 }
+
+// ==========================================
+// IMAGE GENERATION - GEMINI (Product Photos + Fallback)
+// ==========================================
 
 async function generateWithGemini(referenceImageBase64, bagImageBase64, prompt) {
   if (!process.env.VITE_API_KEY) {
@@ -356,67 +366,69 @@ app.post('/api/generate-carousel', async (req, res) => {
 
     console.log('📥 All images downloaded');
 
-    // Generate frames
+    // Generate frames with CORRECT strategy
     const frames = [];
 
-    // Frame 1: Mirror selfie 1 + bag replacement
-    console.log('🎨 Generating Frame 1...');
+    // ✅ Frame 1: Mirror selfie 1 + DALLE-3 (professional quality)
+    console.log('🎨 Generating Frame 1 (Mirror selfie - DALLE-3)...');
     try {
       const frame1 = await generateWithDALLE3(
         ref1Base64,
         'Replace the handbag in this mirror selfie with the target luxury bag. Keep the woman identical, maintain pose and background exactly.'
       );
       frames.push(frame1);
-      console.log('✅ Frame 1 done');
+      console.log('✅ Frame 1 done (DALLE-3)');
     } catch (e) {
-      console.warn('⚠️ Frame 1 DALLE-3 failed, using Gemini');
+      console.warn('⚠️ Frame 1 DALLE-3 failed, falling back to Gemini:', e.message);
       const frame1 = await generateWithGemini(ref1Base64, bagBase64, 'Replace the handbag with the target bag. Keep the woman identical.');
       frames.push(frame1);
+      console.log('✅ Frame 1 done (Gemini fallback)');
     }
 
-    // Frame 2: Product angled
-    console.log('🎨 Generating Frame 2...');
+    // ✅ Frame 2: Product angled + GEMINI ONLY (image-to-image, perfect for this)
+    console.log('🎨 Generating Frame 2 (Product angled - Gemini)...');
     try {
-      const frame2 = await generateWithDALLE3(
+      const frame2 = await generateWithGemini(
         prodAngledBase64,
+        bagBase64,
         'Replace the bag with the target bag. Maintain professional angled view and lighting.'
       );
       frames.push(frame2);
-      console.log('✅ Frame 2 done');
+      console.log('✅ Frame 2 done (Gemini)');
     } catch (e) {
-      console.warn('⚠️ Frame 2 DALLE-3 failed, using Gemini');
-      const frame2 = await generateWithGemini(prodAngledBase64, bagBase64, 'Replace the bag with target bag. Maintain professional angled view.');
-      frames.push(frame2);
+      console.error('❌ Frame 2 failed:', e.message);
+      throw new Error(`Frame 2 generation failed: ${e.message}`);
     }
 
-    // Frame 3: Product front
-    console.log('🎨 Generating Frame 3...');
+    // ✅ Frame 3: Product front + GEMINI ONLY (image-to-image, perfect for this)
+    console.log('🎨 Generating Frame 3 (Product front - Gemini)...');
     try {
-      const frame3 = await generateWithDALLE3(
+      const frame3 = await generateWithGemini(
         prodFrontBase64,
+        bagBase64,
         'Replace the bag with the target bag. Maintain professional front view and lighting.'
       );
       frames.push(frame3);
-      console.log('✅ Frame 3 done');
+      console.log('✅ Frame 3 done (Gemini)');
     } catch (e) {
-      console.warn('⚠️ Frame 3 DALLE-3 failed, using Gemini');
-      const frame3 = await generateWithGemini(prodFrontBase64, bagBase64, 'Replace the bag with target bag. Maintain professional front view.');
-      frames.push(frame3);
+      console.error('❌ Frame 3 failed:', e.message);
+      throw new Error(`Frame 3 generation failed: ${e.message}`);
     }
 
-    // Frame 4: Mirror selfie 2 + bag replacement (different pose)
-    console.log('🎨 Generating Frame 4...');
+    // ✅ Frame 4: Mirror selfie 2 + DALLE-3 (professional quality, different pose)
+    console.log('🎨 Generating Frame 4 (Mirror selfie - DALLE-3)...');
     try {
       const frame4 = await generateWithDALLE3(
         ref2Base64,
         'Replace the handbag in this mirror selfie with the target luxury bag. Keep the woman identical but use different pose.'
       );
       frames.push(frame4);
-      console.log('✅ Frame 4 done');
+      console.log('✅ Frame 4 done (DALLE-3)');
     } catch (e) {
-      console.warn('⚠️ Frame 4 DALLE-3 failed, using Gemini');
+      console.warn('⚠️ Frame 4 DALLE-3 failed, falling back to Gemini:', e.message);
       const frame4 = await generateWithGemini(ref2Base64, bagBase64, 'Replace the handbag with target bag. Different pose. Keep woman identical.');
       frames.push(frame4);
+      console.log('✅ Frame 4 done (Gemini fallback)');
     }
 
     console.log('✅ All frames generated');
@@ -449,7 +461,13 @@ app.post('/api/generate-carousel', async (req, res) => {
       hashtags: hashtags,
       reference_photos: [selectedReferences[0].name, selectedReferences[1].name],
       status: 'ready_for_posting',
-      frames: frameIds
+      frames: frameIds,
+      frame_strategy: {
+        frame1: 'DALLE-3',
+        frame2: 'Gemini',
+        frame3: 'Gemini',
+        frame4: 'DALLE-3'
+      }
     };
 
     // Upload metadata
@@ -622,8 +640,12 @@ async function startup() {
   
   app.listen(PORT, () => {
     console.log(`✅ Backend running on port ${PORT}`);
-    console.log(`✅ Google Drive integration active`);
-    console.log(`📁 Folders configured and ready`);
+    console.log(`✅ Frame Strategy:`);
+    console.log(`   Frame 1 (Mirror selfie): DALLE-3 → Gemini fallback`);
+    console.log(`   Frame 2 (Product angled): Gemini only`);
+    console.log(`   Frame 3 (Product front): Gemini only`);
+    console.log(`   Frame 4 (Mirror selfie): DALLE-3 → Gemini fallback`);
+    console.log(`📁 Google Drive integration active`);
   });
 }
 
