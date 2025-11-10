@@ -245,24 +245,37 @@ async function generateWithDALLE3(referenceImageBase64, prompt) {
 }
 
 // ==========================================
+// CLEANUP BASE64 HELPER (GPT fix)
+// ==========================================
+
+function cleanupBase64(b64) {
+  // Remove data URL prefix if present
+  const cleaned = b64.replace(/^data:.*?;base64,/, "").trim();
+  // Normalize web-safe base64
+  return cleaned.replace(/-/g, "+").replace(/_/g, "/");
+}
+
+// ==========================================
 // IMAGE GENERATION - GEMINI (Product Photos + Fallback)
-// FIXED: Properly extract base64 image data from Gemini response
+// FIXED: Extract base64 → convert to Buffer (GPT recommendation)
 // ==========================================
 
 async function generateWithGemini(referenceImageBase64, bagImageBase64, prompt) {
-  if (!process.env.VITE_API_KEY) {
-    throw new Error('Gemini API key not configured');
+  const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_API_KEY;
+  if (!apiKey) {
+    throw new Error('Gemini API key not configured (GEMINI_API_KEY or VITE_API_KEY)');
   }
 
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-image' });
+    const genAI2 = new GoogleGenerativeAI(apiKey);
+    const model = genAI2.getGenerativeModel({ model: 'gemini-2.5-flash-image' });
 
     const parts = [];
 
     if (referenceImageBase64) {
       parts.push({
         inlineData: {
-          data: referenceImageBase64,
+          data: cleanupBase64(referenceImageBase64),
           mimeType: 'image/png'
         }
       });
@@ -271,7 +284,7 @@ async function generateWithGemini(referenceImageBase64, bagImageBase64, prompt) 
     if (bagImageBase64) {
       parts.push({
         inlineData: {
-          data: bagImageBase64,
+          data: cleanupBase64(bagImageBase64),
           mimeType: 'image/png'
         }
       });
@@ -290,26 +303,31 @@ async function generateWithGemini(referenceImageBase64, bagImageBase64, prompt) 
       }]
     });
 
-    if (!result.response || !result.response.candidates || result.response.candidates.length === 0) {
-      throw new Error('Gemini did not return any candidates');
+    const candidates = result?.response?.candidates ?? [];
+    if (!candidates.length) {
+      throw new Error('Gemini returned no candidates');
     }
 
-    const candidate = result.response.candidates[0];
-    if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
-      throw new Error('Gemini did not generate any content parts');
+    const contentParts = candidates[0]?.content?.parts ?? [];
+    if (!contentParts.length) {
+      throw new Error('Gemini returned no content parts');
     }
 
-    // ✅ FIXED: Properly extract image from response
-    for (const part of candidate.content.parts) {
-      // Check if part has inlineData property (image)
-      if (part.inlineData && part.inlineData.data) {
-        console.log(`✅ Gemini returned image data`);
-        // Return the base64 data directly (already base64 from Gemini)
-        return part.inlineData.data;
-      }
+    // ✅ FIXED per GPT: Find image part and convert to Buffer
+    const imagePart = contentParts.find(p => p.inlineData?.data && p.inlineData?.mimeType);
+    if (!imagePart) {
+      throw new Error('Gemini response did not contain image data');
     }
 
-    throw new Error('Gemini response did not contain image data');
+    const mimeType = imagePart.inlineData.mimeType || 'image/png';
+    const base64Data = cleanupBase64(imagePart.inlineData.data);
+    const buffer = Buffer.from(base64Data, 'base64');
+    const base64String = buffer.toString('base64');
+
+    console.log(`✅ Gemini returned image (${mimeType}, ${buffer.length} bytes)`);
+
+    // Return as base64 string for consistency
+    return base64String;
 
   } catch (error) {
     console.error('❌ Gemini error details:', error);
